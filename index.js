@@ -17,8 +17,12 @@ const USERS = {
   '280208045297895@lid': 'Viki',
 };
 
-// Debounce timers per sender
+// Debounce timers per user (keyed by name, not raw from)
 const timers = {};
+const lastChatId = {}; // last known chatId per user for reply
+
+// Dedup: ignore message IDs already processed
+const processedIds = new Set();
 
 async function sendReply(chatId) {
   if (!WAHA_URL) {
@@ -38,8 +42,11 @@ app.post('/webhook', async (req, res) => {
   const payload = req.body?.payload;
   if (!payload) return;
 
-  const { from, body } = payload;
+  const { id, from, body } = payload;
   if (!from || !body) return;
+
+  if (id && processedIds.has(id)) return;
+  if (id) processedIds.add(id);
 
   const user = USERS[from];
   if (!user) {
@@ -64,12 +71,13 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // Reset debounce timer for this sender
-  if (timers[from]) clearTimeout(timers[from]);
-  timers[from] = setTimeout(async () => {
-    delete timers[from];
+  // Reset debounce timer keyed by user name (not raw from)
+  lastChatId[user] = from;
+  if (timers[user]) clearTimeout(timers[user]);
+  timers[user] = setTimeout(async () => {
+    delete timers[user];
     try {
-      await sendReply(from);
+      await sendReply(lastChatId[user]);
       console.log(`Reply sent to ${user}`);
     } catch (err) {
       console.error('Reply error:', err.message);
