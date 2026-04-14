@@ -1,5 +1,13 @@
 const { google } = require('googleapis');
 
+function getCurrentTab() {
+  return new Date().toLocaleDateString('es-AR', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'America/Argentina/Buenos_Aires',
+  }).replace(' de ', ' ').replace(/^\w/, c => c.toUpperCase());
+}
+
 function getClient() {
   const auth = new google.auth.JWT({
     email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -13,7 +21,7 @@ async function appendExpense({ date, time, user, description, amount }) {
   const sheets = getClient();
   await sheets.spreadsheets.values.append({
     spreadsheetId: process.env.GOOGLE_SHEET_ID,
-    range: `${process.env.GOOGLE_SHEET_TAB}!A:E`,
+    range: `${getCurrentTab()}!A:E`,
     valueInputOption: 'USER_ENTERED',
     requestBody: {
       values: [[date, time, user, description, amount]],
