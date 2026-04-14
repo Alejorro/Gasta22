@@ -12,7 +12,9 @@ const WAHA_API_KEY = process.env.WAHA_API_KEY;
 
 const USERS = {
   '5491127539881@c.us': 'Alejo',
+  '27088442679363@lid': 'Alejo',
   '5491139431742@c.us': 'Viki',
+  '280208045297895@lid': 'Viki',
 };
 
 // Debounce timers per sender
