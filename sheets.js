@@ -29,15 +29,42 @@ async function appendExpense({ date, time, user, description, amount }) {
   });
 }
 
-module.exports = { appendExpense };
+async function readMesada() {
+  const sheets = getClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: process.env.GOOGLE_SHEET_ID,
+    range: 'Totales!B21:B22',
+  });
+  const values = res.data.values || [];
+  return {
+    Alejo: parseFloat(values[0]?.[0]) || 0,
+    Viki: parseFloat(values[1]?.[0]) || 0,
+  };
+}
+
+async function getPersonalTotal(user, tab) {
+  const sheets = getClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: process.env.GOOGLE_SHEET_ID,
+    range: `${tab}!C:E`,
+  });
+  const rows = res.data.values || [];
+  let total = 0;
+  for (const row of rows) {
+    if (row[0] === user) {
+      const amount = parseFloat(row[2]);
+      if (!isNaN(amount)) total += amount;
+    }
+  }
+  return total;
+}
+
+module.exports = { appendExpense, readMesada, getPersonalTotal, getCurrentTab };
 
 // Quick test when run directly
 if (require.main === module) {
   require('dotenv').config();
-  const now = new Date();
-  const date = now.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
-  const time = now.toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
-  appendExpense({ date, time, user: 'Alejo', description: 'test', amount: 100 })
-    .then(() => console.log('Row added successfully'))
+  readMesada()
+    .then(m => console.log('Mesada:', m))
     .catch(err => console.error('Error:', err.message));
 }
