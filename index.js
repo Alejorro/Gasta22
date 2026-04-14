@@ -35,7 +35,8 @@ const OVER_LIMIT_ONGOING = {
 const timers = {};
 const lastChatId = {};
 const processedIds = new Set();
-const pendingCasa = {}; // { userName: { amount, from, stage1Timer, stage2Timer } }
+const pendingCasa = {};     // { userName: { amount, from, stage1Timer, stage2Timer } }
+const pendingPersonal = {}; // { userName: { amount, from, stage1Timer, stage2Timer } }
 
 // --- Messaging ---
 
@@ -99,16 +100,16 @@ function hasCasa(text) {
   return /\bcasa\b/i.test(text);
 }
 
-function clearPendingCasa(user) {
-  if (pendingCasa[user]) {
-    clearTimeout(pendingCasa[user].stage1Timer);
-    clearTimeout(pendingCasa[user].stage2Timer);
-    delete pendingCasa[user];
+function clearPending(map, user) {
+  if (map[user]) {
+    clearTimeout(map[user].stage1Timer);
+    clearTimeout(map[user].stage2Timer);
+    delete map[user];
   }
 }
 
 function createPendingCasa(user, amount, from) {
-  clearPendingCasa(user); // cancel any existing pending for this user
+  clearPending(pendingCasa, user);
 
   const stage1Timer = setTimeout(async () => {
     if (!pendingCasa[user]) return;
@@ -117,20 +118,56 @@ function createPendingCasa(user, amount, from) {
 
   const stage2Timer = setTimeout(async () => {
     if (!pendingCasa[user]) return;
-    const { from: pendingFrom } = pendingCasa[user];
-    clearPendingCasa(user);
+    clearPending(pendingCasa, user);
     try {
       const now = new Date();
-      const date = now.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
-      const time = now.toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
-      await appendExpense({ date, time, user: `${user} - CASA`, description: '', amount });
-      console.log(`Saved (no description timeout): ${user} - CASA $${amount}`);
+      const d = now.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
+      const t = now.toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
+      await appendExpense({ date: d, time: t, user: `${user} - CASA`, description: '', amount });
+      console.log(`Saved (casa no desc): ${user} - CASA $${amount}`);
     } catch (err) {
-      console.error('Sheets error (pending timeout):', err.message);
+      console.error('Sheets error (casa timeout):', err.message);
     }
   }, 10000);
 
   pendingCasa[user] = { amount, from, stage1Timer, stage2Timer };
+}
+
+function createPendingPersonal(user, amount, from) {
+  clearPending(pendingPersonal, user);
+
+  const stage1Timer = setTimeout(async () => {
+    if (!pendingPersonal[user]) return;
+    await sendMessage(pendingPersonal[user].from, `Falta la descripcion del gasto de $${amount}`);
+  }, 5000);
+
+  const stage2Timer = setTimeout(async () => {
+    if (!pendingPersonal[user]) return;
+    clearPending(pendingPersonal, user);
+    try {
+      const now = new Date();
+      const d = now.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
+      const t = now.toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
+      await checkAndWarnLimit(user, amount, from);
+      await appendExpense({ date: d, time: t, user, description: '', amount });
+      console.log(`Saved (personal no desc): ${user} $${amount}`);
+    } catch (err) {
+      console.error('Sheets error (personal timeout):', err.message);
+    }
+  }, 10000);
+
+  pendingPersonal[user] = { amount, from, stage1Timer, stage2Timer };
+}
+
+function extractSoloAmount(text) {
+  const parts = text.trim().split(/\s+/);
+  if (parts.length !== 1) return null;
+  const match = parts[0].match(/^\$?(\d+\.?\d*)(k?)$/i);
+  if (!match) return null;
+  let amount = parseFloat(match[1]);
+  if (match[2].toLowerCase() === 'k') amount *= 1000;
+  if (isNaN(amount) || amount <= 0) return null;
+  return amount;
 }
 
 // --- Webhook ---
@@ -157,26 +194,7 @@ app.post('/webhook', async (req, res) => {
   const date = now.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
   const time = now.toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
 
-  // --- Pending casa: any message resolves it ---
-  if (pendingCasa[user]) {
-    const parsed = parseMessage(body);
-    if (!parsed) {
-      // Not a parseable expense — use as description
-      const { amount } = pendingCasa[user];
-      clearPendingCasa(user);
-      try {
-        await appendExpense({ date, time, user: `${user} - CASA`, description: body.trim(), amount });
-        console.log(`Saved (casa resolved): [${date}] ${user} - CASA — ${body.trim()} $${amount}`);
-      } catch (err) {
-        console.error('Sheets error:', err.message);
-      }
-      resetDebounce(user, from);
-      return;
-    }
-    // Parseable expense — process it normally below, pending timers keep running
-  }
-
-  // --- Saldo query ---
+  // --- Commands (always handled first) ---
   if (body.trim().toLowerCase() === 'saldo') {
     try {
       const [mesada, totalPersonal] = await Promise.all([
@@ -196,9 +214,52 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
+  // --- Pending casa: any non-parseable message is the description ---
+  if (pendingCasa[user]) {
+    const parsed = parseMessage(body);
+    if (!parsed) {
+      const { amount } = pendingCasa[user];
+      clearPending(pendingCasa, user);
+      try {
+        await appendExpense({ date, time, user: `${user} - CASA`, description: body.trim(), amount });
+        console.log(`Saved (casa resolved): [${date}] ${user} - CASA — ${body.trim()} $${amount}`);
+      } catch (err) {
+        console.error('Sheets error:', err.message);
+      }
+      resetDebounce(user, from);
+      return;
+    }
+    // Parseable expense — process normally, casa timers keep running
+  }
+
+  // --- Pending personal: any non-parseable message is the description ---
+  if (pendingPersonal[user]) {
+    const parsed = parseMessage(body);
+    if (!parsed) {
+      const { amount } = pendingPersonal[user];
+      clearPending(pendingPersonal, user);
+      await checkAndWarnLimit(user, amount, from);
+      try {
+        await appendExpense({ date, time, user, description: body.trim(), amount });
+        console.log(`Saved (personal resolved): [${date}] ${user} — ${body.trim()} $${amount}`);
+      } catch (err) {
+        console.error('Sheets error:', err.message);
+      }
+      resetDebounce(user, from);
+      return;
+    }
+    // Parseable expense — process normally, personal timers keep running
+  }
+
   // --- Parse message ---
   const parsed = parseMessage(body);
   if (!parsed) {
+    const soloAmount = extractSoloAmount(body);
+    if (soloAmount !== null) {
+      createPendingPersonal(user, soloAmount, from);
+      await sendMessage(from, `¿Que fue el gasto de $${soloAmount}?`);
+      return;
+    }
     console.log(`Could not parse: "${body}"`);
     return;
   }
@@ -209,7 +270,7 @@ app.post('/webhook', async (req, res) => {
     if (!cleanDesc) {
       createPendingCasa(user, parsed.amount, from);
       await sendMessage(from, `¿Que fue el gasto casa de $${parsed.amount}?`);
-      return; // no resetDebounce — LISTO CAPO waits until description is provided
+      return;
     }
     try {
       await appendExpense({ date, time, user: `${user} - CASA`, description: cleanDesc, amount: parsed.amount });
