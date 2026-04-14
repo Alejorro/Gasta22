@@ -1,7 +1,5 @@
 const { google } = require('googleapis');
 
-const SHEET_ID = 0; // numeric ID of "Gastos" tab
-
 function getClient() {
   const auth = new google.auth.JWT({
     email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -13,65 +11,12 @@ function getClient() {
 
 async function appendExpense({ date, time, user, description, amount }) {
   const sheets = getClient();
-  const sheetId = process.env.GOOGLE_SHEET_ID;
-  const tab = process.env.GOOGLE_SHEET_TAB;
-
-  // Get current data to find last expense row (ignoring TOTAL row)
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: sheetId,
-    range: `${tab}!A:E`,
-  });
-
-  const rows = res.data.values || [];
-  let lastExpenseRow = 1; // header is row 1
-  for (let i = 1; i < rows.length; i++) {
-    // TOTAL row has 'TOTAL:' in column D (index 3)
-    if (rows[i] && rows[i][3] !== 'TOTAL:') {
-      lastExpenseRow = i + 1;
-    }
-  }
-
-  const newExpenseRow = lastExpenseRow + 1;
-  const totalRow = newExpenseRow + 1;
-
-  // Write new expense
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: sheetId,
-    range: `${tab}!A${newExpenseRow}:E${newExpenseRow}`,
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: process.env.GOOGLE_SHEET_ID,
+    range: `${process.env.GOOGLE_SHEET_TAB}!A:E`,
     valueInputOption: 'USER_ENTERED',
-    requestBody: { values: [[date, time, user, description, amount]] },
-  });
-
-  // Write TOTAL row: label in Description (D), sum in Amount (E)
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: sheetId,
-    range: `${tab}!A${totalRow}:E${totalRow}`,
-    valueInputOption: 'USER_ENTERED',
-    requestBody: { values: [['', '', '', 'TOTAL:', `=SUM(E2:E${newExpenseRow})`]] },
-  });
-
-  // Apply yellow background + bold to the TOTAL row
-  await sheets.spreadsheets.batchUpdate({
-    spreadsheetId: sheetId,
     requestBody: {
-      requests: [{
-        repeatCell: {
-          range: {
-            sheetId: SHEET_ID,
-            startRowIndex: totalRow - 1,
-            endRowIndex: totalRow,
-            startColumnIndex: 0,
-            endColumnIndex: 5,
-          },
-          cell: {
-            userEnteredFormat: {
-              backgroundColor: { red: 1, green: 0.95, blue: 0.2 },
-              textFormat: { bold: true },
-            },
-          },
-          fields: 'userEnteredFormat(backgroundColor,textFormat)',
-        },
-      }],
+      values: [[date, time, user, description, amount]],
     },
   });
 }
@@ -84,7 +29,7 @@ if (require.main === module) {
   const now = new Date();
   const date = now.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
   const time = now.toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
-  appendExpense({ date, time, user: 'Alejo', description: 'test formato', amount: 500 })
+  appendExpense({ date, time, user: 'Alejo', description: 'test', amount: 100 })
     .then(() => console.log('Row added successfully'))
     .catch(err => console.error('Error:', err.message));
 }
