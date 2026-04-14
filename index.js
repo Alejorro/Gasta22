@@ -24,15 +24,21 @@ const lastChatId = {}; // last known chatId per user for reply
 // Dedup: ignore message IDs already processed
 const processedIds = new Set();
 
-async function sendReply(chatId) {
+const REPLY = {
+  Alejo: 'LISTO CAPO',
+  Viki: 'LISTO CAPA',
+};
+
+async function sendReply(chatId, user) {
+  const text = REPLY[user] || 'LISTO';
   if (!WAHA_URL) {
-    console.log(`[reply skipped — no WAHA_URL] would send to ${chatId}`);
+    console.log(`[reply skipped — no WAHA_URL] would send to ${chatId}: ${text}`);
     return;
   }
   await fetch(`${WAHA_URL}/api/sendText`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY },
-    body: JSON.stringify({ chatId, text: 'LISTO CAPO', session: 'default' }),
+    body: JSON.stringify({ chatId, text, session: 'default' }),
   });
 }
 
@@ -77,7 +83,7 @@ app.post('/webhook', async (req, res) => {
   timers[user] = setTimeout(async () => {
     delete timers[user];
     try {
-      await sendReply(lastChatId[user]);
+      await sendReply(lastChatId[user], user);
       console.log(`Reply sent to ${user}`);
     } catch (err) {
       console.error('Reply error:', err.message);
