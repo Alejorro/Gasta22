@@ -1,6 +1,8 @@
 
 function parseAmount(token) {
-  const match = token.match(/^\$?(\d+\.?\d*)(k?)$/i);
+  // Normalize: remove leading $, replace comma decimal separator with dot
+  const normalized = token.replace(/^\$/, '').replace(/,(\d+)$/, '.$1');
+  const match = normalized.match(/^(\d+\.?\d*)(k?)$/i);
   if (!match) return null;
   let amount = parseFloat(match[1]);
   if (match[2].toLowerCase() === 'k') amount *= 1000;
@@ -9,7 +11,9 @@ function parseAmount(token) {
 }
 
 function parseMessage(text) {
-  const parts = text.trim().split(/\s+/);
+  // Strip parenthetical groups before splitting so "(chino)" becomes part of description cleanly
+  const cleaned = text.trim().replace(/\([^)]*\)/g, ' ');
+  const parts = cleaned.trim().split(/\s+/).filter(Boolean);
   if (parts.length < 2) return null;
 
   for (let i = 0; i < parts.length; i++) {
@@ -38,6 +42,8 @@ if (require.main === module) {
     '15k dinner',
     'bad input',
     '100',
+    'Chicles y monster (chino) 9522,11',
+    'cafe 1500,50',
   ];
   for (const c of cases) {
     console.log(`"${c}" →`, parseMessage(c));

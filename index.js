@@ -261,6 +261,7 @@ app.post('/webhook', async (req, res) => {
       return;
     }
     console.log(`Could not parse: "${body}"`);
+    await sendMessage(from, 'NO PUDE CARGAR EL GASTO');
     return;
   }
 
