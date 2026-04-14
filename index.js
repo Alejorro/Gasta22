@@ -53,9 +53,11 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  const date = new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
+  const now = new Date();
+  const date = now.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
+  const time = now.toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
   try {
-    await appendExpense({ date, user, description: parsed.description, amount: parsed.amount });
+    await appendExpense({ date, time, user, description: parsed.description, amount: parsed.amount });
     console.log(`Saved: [${date}] ${user} — ${parsed.description} $${parsed.amount}`);
   } catch (err) {
     console.error('Sheets error:', err.message);

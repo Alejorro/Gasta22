@@ -9,14 +9,14 @@ function getClient() {
   return google.sheets({ version: 'v4', auth });
 }
 
-async function appendExpense({ date, user, description, amount }) {
+async function appendExpense({ date, time, user, description, amount }) {
   const sheets = getClient();
   await sheets.spreadsheets.values.append({
     spreadsheetId: process.env.GOOGLE_SHEET_ID,
-    range: `${process.env.GOOGLE_SHEET_TAB}!A:D`,
+    range: `${process.env.GOOGLE_SHEET_TAB}!A:E`,
     valueInputOption: 'USER_ENTERED',
     requestBody: {
-      values: [[date, user, description, amount]],
+      values: [[date, time, user, description, amount]],
     },
   });
 }
