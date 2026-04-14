@@ -8,6 +8,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const WAHA_URL = process.env.WAHA_URL;
+const WAHA_API_KEY = process.env.WAHA_API_KEY;
 
 const USERS = {
   '5491127539881@c.us': 'Alejo',
@@ -24,7 +25,7 @@ async function sendReply(chatId) {
   }
   await fetch(`${WAHA_URL}/api/sendText`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY },
     body: JSON.stringify({ chatId, text: 'LISTO CAPO', session: 'default' }),
   });
 }
