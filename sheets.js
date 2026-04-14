@@ -1,5 +1,7 @@
 const { google } = require('googleapis');
 
+const SHEET_ID = 0; // numeric ID of "Gastos" tab
+
 function getClient() {
   const auth = new google.auth.JWT({
     email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -23,15 +25,16 @@ async function appendExpense({ date, time, user, description, amount }) {
   const rows = res.data.values || [];
   let lastExpenseRow = 1; // header is row 1
   for (let i = 1; i < rows.length; i++) {
-    if (rows[i] && rows[i][0] !== 'TOTAL') {
-      lastExpenseRow = i + 1; // 1-based sheet row
+    // TOTAL row has 'TOTAL:' in column D (index 3)
+    if (rows[i] && rows[i][3] !== 'TOTAL:') {
+      lastExpenseRow = i + 1;
     }
   }
 
   const newExpenseRow = lastExpenseRow + 1;
   const totalRow = newExpenseRow + 1;
 
-  // Write new expense (overwrites old TOTAL row if it was there)
+  // Write new expense
   await sheets.spreadsheets.values.update({
     spreadsheetId: sheetId,
     range: `${tab}!A${newExpenseRow}:E${newExpenseRow}`,
@@ -39,12 +42,37 @@ async function appendExpense({ date, time, user, description, amount }) {
     requestBody: { values: [[date, time, user, description, amount]] },
   });
 
-  // Write TOTAL row below
+  // Write TOTAL row: label in Description (D), sum in Amount (E)
   await sheets.spreadsheets.values.update({
     spreadsheetId: sheetId,
     range: `${tab}!A${totalRow}:E${totalRow}`,
     valueInputOption: 'USER_ENTERED',
-    requestBody: { values: [['TOTAL', '', '', '', `=SUM(E2:E${newExpenseRow})`]] },
+    requestBody: { values: [['', '', '', 'TOTAL:', `=SUM(E2:E${newExpenseRow})`]] },
+  });
+
+  // Apply yellow background + bold to the TOTAL row
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: sheetId,
+    requestBody: {
+      requests: [{
+        repeatCell: {
+          range: {
+            sheetId: SHEET_ID,
+            startRowIndex: totalRow - 1,
+            endRowIndex: totalRow,
+            startColumnIndex: 0,
+            endColumnIndex: 5,
+          },
+          cell: {
+            userEnteredFormat: {
+              backgroundColor: { red: 1, green: 0.95, blue: 0.2 },
+              textFormat: { bold: true },
+            },
+          },
+          fields: 'userEnteredFormat(backgroundColor,textFormat)',
+        },
+      }],
+    },
   });
 }
 
@@ -56,7 +84,7 @@ if (require.main === module) {
   const now = new Date();
   const date = now.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
   const time = now.toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
-  appendExpense({ date, time, user: 'Alejo', description: 'test total', amount: 999 })
+  appendExpense({ date, time, user: 'Alejo', description: 'test formato', amount: 500 })
     .then(() => console.log('Row added successfully'))
     .catch(err => console.error('Error:', err.message));
 }
