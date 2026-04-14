@@ -70,7 +70,7 @@ app.post('/webhook', async (req, res) => {
     } catch (err) {
       console.error('Reply error:', err.message);
     }
-  }, 10000);
+  }, 5000);
 });
 
 app.listen(PORT, () => {
