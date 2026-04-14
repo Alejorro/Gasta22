@@ -35,7 +35,7 @@ const OVER_LIMIT_ONGOING = {
 const timers = {};
 const lastChatId = {};
 const processedIds = new Set();
-const pendingCasa = {}; // { userName: { amount } }
+const pendingCasa = {}; // { userName: { amount, from, stage1Timer, stage2Timer } }
 
 // --- Messaging ---
 
@@ -93,10 +93,44 @@ async function checkAndWarnLimit(user, amount, chatId) {
   }
 }
 
-// --- Casa detection ---
+// --- Casa helpers ---
 
 function hasCasa(text) {
   return /\bcasa\b/i.test(text);
+}
+
+function clearPendingCasa(user) {
+  if (pendingCasa[user]) {
+    clearTimeout(pendingCasa[user].stage1Timer);
+    clearTimeout(pendingCasa[user].stage2Timer);
+    delete pendingCasa[user];
+  }
+}
+
+function createPendingCasa(user, amount, from) {
+  clearPendingCasa(user); // cancel any existing pending for this user
+
+  const stage1Timer = setTimeout(async () => {
+    if (!pendingCasa[user]) return;
+    await sendMessage(pendingCasa[user].from, `Falta la descripcion del gasto casa de $${amount}`);
+  }, 5000);
+
+  const stage2Timer = setTimeout(async () => {
+    if (!pendingCasa[user]) return;
+    const { from: pendingFrom } = pendingCasa[user];
+    clearPendingCasa(user);
+    try {
+      const now = new Date();
+      const date = now.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
+      const time = now.toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
+      await appendExpense({ date, time, user: `${user} - CASA`, description: '', amount });
+      console.log(`Saved (no description timeout): ${user} - CASA $${amount}`);
+    } catch (err) {
+      console.error('Sheets error (pending timeout):', err.message);
+    }
+  }, 10000);
+
+  pendingCasa[user] = { amount, from, stage1Timer, stage2Timer };
 }
 
 // --- Webhook ---
@@ -123,13 +157,13 @@ app.post('/webhook', async (req, res) => {
   const date = now.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
   const time = now.toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
 
-  // --- Pending casa: waiting for description ---
+  // --- Pending casa: any message resolves it ---
   if (pendingCasa[user]) {
     const parsed = parseMessage(body);
     if (!parsed) {
-      // This message is the description for the pending casa
+      // Not a parseable expense — use as description
       const { amount } = pendingCasa[user];
-      delete pendingCasa[user];
+      clearPendingCasa(user);
       try {
         await appendExpense({ date, time, user: `${user} - CASA`, description: body.trim(), amount });
         console.log(`Saved (casa resolved): [${date}] ${user} - CASA — ${body.trim()} $${amount}`);
@@ -139,8 +173,7 @@ app.post('/webhook', async (req, res) => {
       resetDebounce(user, from);
       return;
     }
-    // A new expense arrived — remind and continue processing it
-    await sendMessage(from, `Falta la descripcion del gasto casa de $${pendingCasa[user].amount}`);
+    // Parseable expense — process it normally below, pending timers keep running
   }
 
   // --- Saldo query ---
@@ -174,10 +207,9 @@ app.post('/webhook', async (req, res) => {
   if (hasCasa(body)) {
     const cleanDesc = parsed.description.replace(/\bcasa\b/gi, '').replace(/\s+/g, ' ').trim();
     if (!cleanDesc) {
-      pendingCasa[user] = { amount: parsed.amount };
+      createPendingCasa(user, parsed.amount, from);
       await sendMessage(from, `¿Que fue el gasto casa de $${parsed.amount}?`);
-      resetDebounce(user, from);
-      return;
+      return; // no resetDebounce — LISTO CAPO waits until description is provided
     }
     try {
       await appendExpense({ date, time, user: `${user} - CASA`, description: cleanDesc, amount: parsed.amount });
