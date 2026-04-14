@@ -1,20 +1,27 @@
+
+function parseAmount(token) {
+  const match = token.match(/^\$?(\d+\.?\d*)(k?)$/i);
+  if (!match) return null;
+  let amount = parseFloat(match[1]);
+  if (match[2].toLowerCase() === 'k') amount *= 1000;
+  if (isNaN(amount) || amount <= 0) return null;
+  return amount;
+}
+
 function parseMessage(text) {
   const parts = text.trim().split(/\s+/);
   if (parts.length < 2) return null;
 
-  const rawAmount = parts[0].replace('$', '');
-  const description = parts.slice(1).join(' ');
-
-  let amount;
-  if (rawAmount.toLowerCase().endsWith('k')) {
-    amount = parseFloat(rawAmount.slice(0, -1)) * 1000;
-  } else {
-    amount = parseFloat(rawAmount);
+  for (let i = 0; i < parts.length; i++) {
+    const amount = parseAmount(parts[i]);
+    if (amount !== null) {
+      const descParts = parts.filter((_, j) => j !== i);
+      if (descParts.length === 0) return null;
+      return { amount, description: descParts.join(' ') };
+    }
   }
 
-  if (isNaN(amount) || amount <= 0) return null;
-
-  return { amount, description };
+  return null;
 }
 
 module.exports = { parseMessage };
