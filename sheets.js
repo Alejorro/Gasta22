@@ -1,0 +1,33 @@
+const { google } = require('googleapis');
+
+function getClient() {
+  const auth = new google.auth.JWT({
+    email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  });
+  return google.sheets({ version: 'v4', auth });
+}
+
+async function appendExpense({ date, user, description, amount }) {
+  const sheets = getClient();
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: process.env.GOOGLE_SHEET_ID,
+    range: `${process.env.GOOGLE_SHEET_TAB}!A:D`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: {
+      values: [[date, user, description, amount]],
+    },
+  });
+}
+
+module.exports = { appendExpense };
+
+// Quick test when run directly
+if (require.main === module) {
+  require('dotenv').config();
+  const today = new Date().toLocaleDateString('es-AR');
+  appendExpense({ date: today, user: 'Alejo', description: 'test', amount: 100 })
+    .then(() => console.log('Row added successfully'))
+    .catch(err => console.error('Error:', err.message));
+}
