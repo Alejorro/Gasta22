@@ -35,6 +35,7 @@ const OVER_LIMIT_ONGOING = {
 const timers = {};
 const lastChatId = {};
 const processedIds = new Set();
+setInterval(() => processedIds.clear(), 60 * 60 * 1000);
 const pendingCasa = {};     // { userName: { amount, from, stage1Timer, stage2Timer } }
 const pendingPersonal = {}; // { userName: { amount, from, stage1Timer, stage2Timer } }
 
