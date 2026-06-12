@@ -43,9 +43,8 @@ sheets.js      # appendExpense, readMesada, getPersonalTotal, getCurrentTab
 |-----|---------------------|
 | `PORT` | 3000 (Railway lo setea automáticamente) |
 | `WAHA_URL` | `https://waha-production-8cff.up.railway.app` |
-| `WAHA_API_KEY` | `gasta22` |
+| `WAHA_API_KEY` | API key configurada en WAHA |
 | `GOOGLE_SHEET_ID` | ID del Google Sheet |
-| `GOOGLE_SHEET_TAB` | (ya no se usa, el tab se calcula dinámicamente) |
 | `GOOGLE_SERVICE_ACCOUNT_EMAIL` | Email de la service account |
 | `GOOGLE_PRIVATE_KEY` | Private key de la service account (con `\n`) |
 
@@ -53,9 +52,9 @@ sheets.js      # appendExpense, readMesada, getPersonalTotal, getCurrentTab
 
 | Var | Valor |
 |-----|-------|
-| `WHATSAPP_API_KEY` | `gasta22` |
-| `WAHA_DASHBOARD_USERNAME` | `admin` |
-| `WAHA_DASHBOARD_PASSWORD` | `gasta22` |
+| `WHATSAPP_API_KEY` | Debe coincidir con `WAHA_API_KEY` |
+| `WAHA_DASHBOARD_USERNAME` | Usuario administrador (secreto de Railway) |
+| `WAHA_DASHBOARD_PASSWORD` | Contraseña segura (secreto de Railway) |
 | `WHATSAPP_HOOK_URL` | `https://gasta22-production.up.railway.app/webhook` |
 | `WHATSAPP_HOOK_EVENTS` | `message` |
 
@@ -94,6 +93,9 @@ cafe 5k            → amount: 5000, description: "cafe"
 cafe 2.5k          → amount: 2500, description: "cafe"
 super mercado 1500 → amount: 1500, description: "super mercado"
 ```
+
+Los montos finales son enteros. No se aceptan centavos (`1500.50`), pero sí
+abreviaturas decimales con `k` cuando dan un monto entero (`2.5k` → `2500`).
 
 Si el mensaje es solo un monto (`5000`), el bot pide la descripción (ver flujo pending).
 

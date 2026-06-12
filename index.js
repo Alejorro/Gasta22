@@ -1,10 +1,10 @@
 require('dotenv').config();
 const express = require('express');
-const { parseMessage } = require('./parser');
+const { parseAmount, parseMessage } = require('./parser');
 const { appendExpense, readMesada, getPersonalTotal, getCurrentTab } = require('./sheets');
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '32kb' }));
 
 const PORT = process.env.PORT || 3000;
 const WAHA_URL = process.env.WAHA_URL;
@@ -35,7 +35,7 @@ const OVER_LIMIT_ONGOING = {
 const timers = {};
 const lastChatId = {};
 const processedIds = new Set();
-setInterval(() => processedIds.clear(), 60 * 60 * 1000);
+setInterval(() => processedIds.clear(), 60 * 60 * 1000).unref();
 const pendingCasa = {};     // { userName: { amount, from, stage1Timer, stage2Timer } }
 const pendingPersonal = {}; // { userName: { amount, from, stage1Timer, stage2Timer } }
 
@@ -46,11 +46,18 @@ async function sendMessage(chatId, text) {
     console.log(`[message skipped — no WAHA_URL] ${chatId}: ${text}`);
     return;
   }
-  await fetch(`${WAHA_URL}/api/sendText`, {
+  if (!WAHA_API_KEY) {
+    throw new Error('Missing environment variable: WAHA_API_KEY');
+  }
+  const response = await fetch(`${WAHA_URL}/api/sendText`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY },
     body: JSON.stringify({ chatId, text, session: 'default' }),
   });
+  if (!response.ok) {
+    const details = await response.text();
+    throw new Error(`WAHA ${response.status}: ${details.slice(0, 200)}`);
+  }
 }
 
 async function sendReply(chatId, user) {
@@ -71,6 +78,13 @@ function resetDebounce(user, chatId) {
       console.error('Reply error:', err.message);
     }
   }, 5000);
+}
+
+function cancelDebounce(user) {
+  if (timers[user]) {
+    clearTimeout(timers[user]);
+    delete timers[user];
+  }
 }
 
 // --- Limit check ---
@@ -111,10 +125,15 @@ function clearPending(map, user) {
 
 function createPendingCasa(user, amount, from) {
   clearPending(pendingCasa, user);
+  cancelDebounce(user);
 
   const stage1Timer = setTimeout(async () => {
     if (!pendingCasa[user]) return;
-    await sendMessage(pendingCasa[user].from, `Falta la descripcion del gasto casa de $${amount}`);
+    try {
+      await sendMessage(pendingCasa[user].from, `Falta la descripcion del gasto casa de $${amount}`);
+    } catch (err) {
+      console.error('Reminder error (casa):', err.message);
+    }
   }, 5000);
 
   const stage2Timer = setTimeout(async () => {
@@ -136,10 +155,15 @@ function createPendingCasa(user, amount, from) {
 
 function createPendingPersonal(user, amount, from) {
   clearPending(pendingPersonal, user);
+  cancelDebounce(user);
 
   const stage1Timer = setTimeout(async () => {
     if (!pendingPersonal[user]) return;
-    await sendMessage(pendingPersonal[user].from, `Falta la descripcion del gasto de $${amount}`);
+    try {
+      await sendMessage(pendingPersonal[user].from, `Falta la descripcion del gasto de $${amount}`);
+    } catch (err) {
+      console.error('Reminder error (personal):', err.message);
+    }
   }, 5000);
 
   const stage2Timer = setTimeout(async () => {
@@ -163,15 +187,14 @@ function createPendingPersonal(user, amount, from) {
 function extractSoloAmount(text) {
   const parts = text.trim().split(/\s+/);
   if (parts.length !== 1) return null;
-  const match = parts[0].match(/^\$?(\d+\.?\d*)(k?)$/i);
-  if (!match) return null;
-  let amount = parseFloat(match[1]);
-  if (match[2].toLowerCase() === 'k') amount *= 1000;
-  if (isNaN(amount) || amount <= 0) return null;
-  return amount;
+  return parseAmount(parts[0]);
 }
 
 // --- Webhook ---
+
+app.get('/health', (req, res) => {
+  res.json({ ok: true });
+});
 
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
@@ -181,6 +204,7 @@ app.post('/webhook', async (req, res) => {
 
   const { id, from, body } = payload;
   if (!from || !body) return;
+  if (payload.fromMe) return;
 
   if (id && processedIds.has(id)) return;
   if (id) processedIds.add(id);
@@ -226,6 +250,7 @@ app.post('/webhook', async (req, res) => {
         console.log(`Saved (casa resolved): [${date}] ${user} - CASA — ${body.trim()} $${amount}`);
       } catch (err) {
         console.error('Sheets error:', err.message);
+        return;
       }
       resetDebounce(user, from);
       return;
@@ -245,6 +270,7 @@ app.post('/webhook', async (req, res) => {
         console.log(`Saved (personal resolved): [${date}] ${user} — ${body.trim()} $${amount}`);
       } catch (err) {
         console.error('Sheets error:', err.message);
+        return;
       }
       resetDebounce(user, from);
       return;
@@ -279,6 +305,7 @@ app.post('/webhook', async (req, res) => {
       console.log(`Saved: [${date}] ${user} - CASA — ${cleanDesc} $${parsed.amount}`);
     } catch (err) {
       console.error('Sheets error:', err.message);
+      return;
     }
     resetDebounce(user, from);
     return;
@@ -296,6 +323,10 @@ app.post('/webhook', async (req, res) => {
   resetDebounce(user, from);
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
+
+module.exports = { app };

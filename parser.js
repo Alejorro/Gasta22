@@ -1,12 +1,12 @@
-
 function parseAmount(token) {
-  // Normalize: remove leading $, replace comma decimal separator with dot
-  const normalized = token.replace(/^\$/, '').replace(/,(\d+)$/, '.$1');
-  const match = normalized.match(/^(\d+\.?\d*)(k?)$/i);
+  const normalized = token.replace(/^\$/, '');
+  const match = normalized.match(/^(\d+(?:\.\d+)?)(k?)$/i);
   if (!match) return null;
-  let amount = parseFloat(match[1]);
-  if (match[2].toLowerCase() === 'k') amount *= 1000;
-  if (isNaN(amount) || amount <= 0) return null;
+  let amount = Number(match[1]);
+  const hasK = match[2].toLowerCase() === 'k';
+  if (!hasK && normalized.includes('.')) return null;
+  if (hasK) amount *= 1000;
+  if (!Number.isInteger(amount) || amount <= 0) return null;
   return amount;
 }
 
@@ -28,7 +28,7 @@ function parseMessage(text) {
   return null;
 }
 
-module.exports = { parseMessage };
+module.exports = { parseAmount, parseMessage };
 
 // Quick test when run directly
 if (require.main === module) {
@@ -42,8 +42,8 @@ if (require.main === module) {
     '15k dinner',
     'bad input',
     '100',
-    'Chicles y monster (chino) 9522,11',
-    'cafe 1500,50',
+    'Chicles y monster (chino) 9522',
+    'cafe 1500',
   ];
   for (const c of cases) {
     console.log(`"${c}" →`, parseMessage(c));
