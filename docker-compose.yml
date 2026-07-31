@@ -1,0 +1,22 @@
+services:
+  waha:
+    image: devlikeapro/waha:arm
+    container_name: gasta22-waha
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3000"
+    volumes:
+      - ./waha-sessions:/app/.sessions
+    environment:
+      TZ: America/Argentina/Buenos_Aires
+      WAHA_API_KEY: "${WAHA_API_KEY}"
+      WAHA_DASHBOARD_ENABLED: "true"
+      WAHA_DASHBOARD_USERNAME: "${WAHA_DASHBOARD_USERNAME}"
+      WAHA_DASHBOARD_PASSWORD: "${WAHA_DASHBOARD_PASSWORD}"
+      WHATSAPP_SWAGGER_USERNAME: "${WAHA_DASHBOARD_USERNAME}"
+      WHATSAPP_SWAGGER_PASSWORD: "${WAHA_DASHBOARD_PASSWORD}"
+      WAHA_PRINT_QR: "false"
+      WHATSAPP_HOOK_URL: "http://host.docker.internal:3002/webhook"
+      WHATSAPP_HOOK_EVENTS: "message"
+      WHATSAPP_DOWNLOAD_MEDIA: "false"
+      WHATSAPP_RESTART_ALL_SESSIONS: "true"

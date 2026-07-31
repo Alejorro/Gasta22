@@ -1,4 +1,8 @@
 node_modules/
 .env
+.env.bak*
 *.json.key
 gasta22-*.json
+.DS_Store
+waha-sessions/
+logs/
