@@ -39,6 +39,20 @@ setInterval(() => processedIds.clear(), 60 * 60 * 1000).unref();
 const pendingCasa = {};     // { userName: { amount, from, stage1Timer, stage2Timer } }
 const pendingPersonal = {}; // { userName: { amount, from, stage1Timer, stage2Timer } }
 
+function getBuenosAiresTimestamp() {
+  const now = new Date();
+  return {
+    date: now.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }),
+    time: now.toLocaleTimeString('es-AR', {
+      timeZone: 'America/Argentina/Buenos_Aires',
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }),
+  };
+}
+
 // --- Messaging ---
 
 async function sendMessage(chatId, text) {
@@ -60,8 +74,50 @@ async function sendMessage(chatId, text) {
   }
 }
 
+// Never let a WAHA failure take down the process — log and keep going.
+async function safeSend(chatId, text) {
+  try {
+    await sendMessage(chatId, text);
+  } catch (err) {
+    console.error('Send error:', err.message);
+  }
+}
+
 async function sendReply(chatId, user) {
   await sendMessage(chatId, REPLY[user] || 'LISTO');
+}
+
+// --- WAHA session watchdog ---
+// WAHA CORE does not restore the session when its container restarts, so the
+// bot goes silent after any reboot. Keep the session alive from here instead.
+
+const SESSION_CHECK_MS = 2 * 60 * 1000;
+
+async function ensureWahaSession() {
+  if (!WAHA_URL || !WAHA_API_KEY) return;
+  try {
+    const res = await fetch(`${WAHA_URL}/api/sessions/default`, {
+      headers: { 'X-Api-Key': WAHA_API_KEY },
+    });
+    if (!res.ok) {
+      console.error(`Session check failed: WAHA ${res.status}`);
+      return;
+    }
+    const { status } = await res.json();
+    // STARTING resolves on its own; SCAN_QR_CODE needs a human, restarting
+    // would just invalidate the QR being scanned.
+    if (status === 'WORKING' || status === 'STARTING' || status === 'SCAN_QR_CODE') return;
+
+    console.log(`WAHA session is ${status} — starting it`);
+    const start = await fetch(`${WAHA_URL}/api/sessions/default/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY },
+      body: '{}',
+    });
+    console.log(start.ok ? 'WAHA session start requested' : `WAHA start failed: ${start.status}`);
+  } catch (err) {
+    console.error('Session watchdog error:', err.message);
+  }
 }
 
 // --- Debounce ---
@@ -140,10 +196,8 @@ function createPendingCasa(user, amount, from) {
     if (!pendingCasa[user]) return;
     clearPending(pendingCasa, user);
     try {
-      const now = new Date();
-      const d = now.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
-      const t = now.toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
-      await appendExpense({ date: d, time: t, user: `${user} - CASA`, description: '', amount });
+      const { date, time } = getBuenosAiresTimestamp();
+      await appendExpense({ date, time, user: `${user} - CASA`, description: '', amount });
       console.log(`Saved (casa no desc): ${user} - CASA $${amount}`);
     } catch (err) {
       console.error('Sheets error (casa timeout):', err.message);
@@ -170,11 +224,9 @@ function createPendingPersonal(user, amount, from) {
     if (!pendingPersonal[user]) return;
     clearPending(pendingPersonal, user);
     try {
-      const now = new Date();
-      const d = now.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
-      const t = now.toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
+      const { date, time } = getBuenosAiresTimestamp();
       await checkAndWarnLimit(user, amount, from);
-      await appendExpense({ date: d, time: t, user, description: '', amount });
+      await appendExpense({ date, time, user, description: '', amount });
       console.log(`Saved (personal no desc): ${user} $${amount}`);
     } catch (err) {
       console.error('Sheets error (personal timeout):', err.message);
@@ -215,9 +267,7 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  const now = new Date();
-  const date = now.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
-  const time = now.toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
+  const { date, time } = getBuenosAiresTimestamp();
 
   // --- Commands (always handled first) ---
   if (body.trim().toLowerCase() === 'saldo') {
@@ -284,11 +334,11 @@ app.post('/webhook', async (req, res) => {
     const soloAmount = extractSoloAmount(body);
     if (soloAmount !== null) {
       createPendingPersonal(user, soloAmount, from);
-      await sendMessage(from, `¿Que fue el gasto de $${soloAmount}?`);
+      await safeSend(from, `¿Que fue el gasto de $${soloAmount}?`);
       return;
     }
     console.log(`Could not parse: "${body}"`);
-    await sendMessage(from, 'NO PUDE CARGAR EL GASTO');
+    await safeSend(from, 'NO PUDE CARGAR EL GASTO');
     return;
   }
 
@@ -297,7 +347,7 @@ app.post('/webhook', async (req, res) => {
     const cleanDesc = parsed.description.replace(/\bcasa\b/gi, '').replace(/\s+/g, ' ').trim();
     if (!cleanDesc) {
       createPendingCasa(user, parsed.amount, from);
-      await sendMessage(from, `¿Que fue el gasto casa de $${parsed.amount}?`);
+      await safeSend(from, `¿Que fue el gasto casa de $${parsed.amount}?`);
       return;
     }
     try {
@@ -323,9 +373,16 @@ app.post('/webhook', async (req, res) => {
   resetDebounce(user, from);
 });
 
+// Safety net: a stray rejection should never kill the bot and lose pending state.
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled rejection:', err?.message || err);
+});
+
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+    ensureWahaSession();
+    setInterval(ensureWahaSession, SESSION_CHECK_MS);
   });
 }
 

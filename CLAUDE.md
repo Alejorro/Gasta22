@@ -16,14 +16,31 @@ Bot de WhatsApp que recibe mensajes de gastos y los guarda en Google Sheets, con
 - Node.js + Express
 - Google Sheets API (via `googleapis`)
 - WAHA (WhatsApp HTTP API, self-hosted)
-- Desplegado en Railway
+- Corre local en la Mac (ya no en Railway)
 
-## Infraestructura en Railway
+## Infraestructura local
 
-| Servicio | URL | Qué es |
+| Servicio | Dónde | Cómo arranca |
 |---|---|---|
-| gasta22 | `gasta22-production.up.railway.app` | El servidor Node.js |
-| waha | `waha-production-8cff.up.railway.app` | La instancia de WAHA |
+| gasta22 | `http://127.0.0.1:3002` | launchd `com.alejorro.gasta22` (RunAtLoad + KeepAlive) |
+| waha | `http://127.0.0.1:3001` | contenedor `gasta22-waha` en Colima, `restart: unless-stopped` |
+
+El contenedor le pega al server por `host.docker.internal:3002`.
+
+**El puerto 3000 NO se puede usar:** lo ocupa el contenedor `dot4_metabase` de otro
+proyecto. Node igual imprime "Server running on port 3000" sin fallar, pero el
+tráfico lo contesta Metabase — falla silenciosa y confusa. Por eso `PORT=3002`.
+
+**Los logs NO pueden vivir dentro de `~/Desktop`:** por TCC de macOS launchd no
+puede abrirlos ahí y el job muere con `EX_CONFIG (78)` sin escribir una sola
+línea de error. Van a `~/Library/Logs/gasta22/`.
+
+```bash
+tail -f ~/Library/Logs/gasta22/gasta22.log        # actividad
+tail -f ~/Library/Logs/gasta22/gasta22-error.log  # errores
+launchctl kickstart -k gui/$(id -u)/com.alejorro.gasta22   # reiniciar server
+docker compose up -d                                        # levantar WAHA
+```
 
 ## Archivos
 
@@ -41,8 +58,8 @@ sheets.js      # appendExpense, readMesada, getPersonalTotal, getCurrentTab
 
 | Var | Valor / Descripción |
 |-----|---------------------|
-| `PORT` | 3000 (Railway lo setea automáticamente) |
-| `WAHA_URL` | `https://waha-production-8cff.up.railway.app` |
+| `PORT` | 3002 (el 3000 lo ocupa Metabase) |
+| `WAHA_URL` | `http://127.0.0.1:3001` (IPv4 explícito, ver nota abajo) |
 | `WAHA_API_KEY` | API key configurada en WAHA |
 | `GOOGLE_SHEET_ID` | ID del Google Sheet |
 | `GOOGLE_SERVICE_ACCOUNT_EMAIL` | Email de la service account |
@@ -50,12 +67,14 @@ sheets.js      # appendExpense, readMesada, getPersonalTotal, getCurrentTab
 
 ### Servicio WAHA
 
+Se definen en `docker-compose.yml`, leyendo del mismo `.env`.
+
 | Var | Valor |
 |-----|-------|
-| `WHATSAPP_API_KEY` | Debe coincidir con `WAHA_API_KEY` |
-| `WAHA_DASHBOARD_USERNAME` | Usuario administrador (secreto de Railway) |
-| `WAHA_DASHBOARD_PASSWORD` | Contraseña segura (secreto de Railway) |
-| `WHATSAPP_HOOK_URL` | `https://gasta22-production.up.railway.app/webhook` |
+| `WAHA_API_KEY` | Debe coincidir con la del server |
+| `WAHA_DASHBOARD_USERNAME` | Usuario del dashboard |
+| `WAHA_DASHBOARD_PASSWORD` | Contraseña del dashboard |
+| `WHATSAPP_HOOK_URL` | `http://host.docker.internal:3002/webhook` |
 | `WHATSAPP_HOOK_EVENTS` | `message` |
 
 ## Usuarios reconocidos
@@ -143,12 +162,85 @@ Solo aplica a gastos personales (no CASA):
 - **Deduplicación:** WAHA puede disparar el webhook dos veces. Se ignoran mensajes con el mismo `payload.id`
 - **Debounce:** keyed por nombre de usuario (no por `from` raw) para evitar duplicados entre `@c.us` y `@lid`
 - **Timestamp:** timezone `America/Argentina/Buenos_Aires`
-- **WAHA session:** se llama `default`. Si se desconecta, re-escanear QR desde el dashboard
+- **WAHA session:** se llama `default`. La sesión vive en `waha-sessions/` y sobrevive
+  reinicios, así que casi nunca hace falta re-escanear el QR
+- **Watchdog de sesión (`ensureWahaSession`):** WAHA CORE **no** restaura la sesión
+  cuando reinicia el contenedor — queda en `STOPPED` y el bot deja de recibir mensajes
+  sin ningún error visible. `WHATSAPP_RESTART_ALL_SESSIONS=true` no alcanza en esta
+  versión (probado). Por eso el server chequea el estado al arrancar y cada 2 min, y
+  la levanta si no está `WORKING`. No la toca si está en `SCAN_QR_CODE` (invalidaría
+  el QR que se está escaneando)
+- **Errores de WAHA no matan el proceso:** los envíos van por `safeSend` y hay un
+  handler de `unhandledRejection`. Antes, un error de WAHA (ej. sesión parada)
+  tiraba abajo el server entero y se perdían los pendings en memoria
+- **`localhost` vs `127.0.0.1`:** hay un `python -m http.server` ocupando `*:3001`,
+  así que `localhost:3001` cae en el Python en vez de WAHA. Usar siempre `127.0.0.1`
+
+## Si el bot deja de responder
+
+Diagnosticar **en este orden** — son las 4 fallas que lo tumbaron en julio 2026, y
+ninguna daba un error obvio:
+
+**1. ¿Corre el server?**
+```bash
+launchctl print gui/$(id -u)/com.alejorro.gasta22 | grep -E "state =|last exit"
+curl -s http://127.0.0.1:3002/health          # espera {"ok":true}
+```
+`EX_CONFIG (78)` sin nada en el log de error = launchd no puede escribir los logs
+(problema de TCC/permisos de carpeta, ver arriba).
+
+**2. ¿Le está contestando otro proceso el puerto?**
+```bash
+curl -s http://127.0.0.1:3002/health          # si NO devuelve {"ok":true}, hay un intruso
+```
+Node imprime "Server running on port X" aunque otro proceso se quede con el puerto.
+**El health check es la única prueba confiable de que el server está escuchando.**
+
+**3. ¿Está viva la sesión de WhatsApp?**
+```bash
+curl -s -H "X-Api-Key: $WAHA_API_KEY" http://127.0.0.1:3001/api/sessions/default
+```
+Espera `WORKING`. Si dice `STOPPED`, el watchdog la levanta en <2 min solo.
+Si dice `SCAN_QR_CODE`, hay que re-escanear (ver abajo).
+
+**4. ¿WAHA está descartando los mensajes?** ← el más engañoso
+```bash
+docker logs --since 30m gasta22-waha 2>&1 | grep -i error
+```
+Si el server no loggea NADA cuando mandás un mensaje pero la sesión está `WORKING`,
+casi seguro WAHA lo recibió y crasheó al parsearlo. Síntoma típico:
+```
+ERROR (WhatsappSession): dropping value from, event: 'message'
+TypeError: Cannot read properties of undefined (reading 'includes')
+```
+**Causa: la imagen de WAHA quedó vieja.** WhatsApp cambia el formato de IDs cada
+tanto y WAHA deja de poder parsearlo. Pasó con la imagen del 26/05 contra WhatsApp
+de julio. Solución:
+```bash
+docker compose pull && docker compose up -d
+```
+La sesión sobrevive el upgrade — no hace falta re-escanear el QR. Igual conviene
+hacer backup de `waha-sessions/` antes.
+
+**Regla general:** si el bot se calla de golpe y `gasta22.log` no muestra ni una
+línea al mandar un mensaje, el problema está *antes* del server — WAHA o el puerto,
+nunca el código del bot.
+
+## Re-escanear el QR (raro, la sesión suele sobrevivir todo)
+
+Desde otra máquina, túnel SSH y navegador:
+```bash
+ssh -L 3001:127.0.0.1:3001 alejo@<ip-de-la-mac>
+# después abrir http://localhost:3001 → dashboard → sesión default
+```
+Credenciales: `WAHA_DASHBOARD_USERNAME` / `WAHA_DASHBOARD_PASSWORD` del `.env`.
 
 ## Estado actual
 
-- [x] Servidor deployado en Railway
-- [x] WAHA deployado en Railway, sesión conectada con número prepago
+- [x] Servidor corriendo local con launchd (puerto 3002)
+- [x] WAHA en Docker/Colima (`2026.7.2`), sesión conectada con número prepago
+- [x] Watchdog que revive la sesión de WAHA sola
+- [x] Errores de WAHA ya no tumban el proceso
 - [x] Webhook configurado: WAHA → gasta22
 - [x] Parser con monto en cualquier posición
 - [x] Google Sheets con pestañas mensuales (Date + Time separados)
